@@ -1,0 +1,24 @@
+{
+  "key": "BX-1101",
+  "cohort": "标准门",
+  "day": 2,
+  "received": 3,
+  "revision": 1,
+  "result_day": 5,
+  "outcome": 0.0,
+  "observed": true,
+  "form": {
+    "手持扫条": {
+      "barcode_reads": 28,
+      "bom_parts": 11
+    },
+    "应装清册": {
+      "mass_mg": 3040000,
+      "nonstandard_sku": 8
+    },
+    "磅重补领": {
+      "counter_issue": 3,
+      "second_reads": 9
+    }
+  }
+}
