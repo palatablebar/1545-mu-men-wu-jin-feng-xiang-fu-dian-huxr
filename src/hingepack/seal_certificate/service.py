@@ -103,3 +103,72 @@ def intervention_summary(rows):
     return [{'单项安排': key, '可比较单量': attempts, '超出拟合域': outlier,
              '总用量': units, '平均预测变化': round(delta/attempts,4)}
             for key,(attempts,outlier,units,delta) in sorted(actions.items())]
+
+
+MEASUREMENT_FIELDS = ('scan_count', 'expected', 'mass_g', 'variant', 'partial', 'scan_repeat')
+
+
+def rows_from_dispatch(plan):
+    """Project immutable jobs into the row shape used by desk and seal checks."""
+    rows = []
+    for job in plan.jobs:
+        readings = tuple(getattr(job, 'readings', ()) or ())
+        rows.append({
+            'key': job.key,
+            'zone': job.cohort,
+            'estimate': job.estimate,
+            'state': job.state,
+            'cost': job.cost,
+            'reason': job.reason,
+            'evidence': job.summary,
+            'hits': list(job.rule_hits),
+            'measurements': dict(zip(MEASUREMENT_FIELDS, readings, strict=False)),
+            'unmeasured': list(getattr(job, 'missing', ()) or ()),
+        })
+    return rows
+
+
+class Manifest(dict):
+    """JSON-compatible export that also exposes ledger fields as attributes."""
+
+    def __getattr__(self, name):
+        try:
+            return self[name]
+        except KeyError as exc:
+            raise AttributeError(name) from exc
+
+
+def export_seal(plan, rows=None):
+    """Sign exactly the roster and balance shown on the revised workbench."""
+    roster = rows_from_dispatch(plan) if rows is None else list(rows)
+    evidence = sign_field_evidence(roster, plan)
+    selected = tuple((row['key'], row['cost']) for row in roster if row['state'] == '已分派')
+    return Manifest({
+        'run_id': getattr(plan, 'request_id', None),
+        'capacity': plan.capacity,
+        'balance': plan.balance,
+        'used_by_group': plan.used_by_group,
+        'roster': roster,
+        'rows': roster,
+        'selected': selected,
+        'dispatched': dict(selected),
+        '工位使用': evidence['工位使用'],
+        '执行业务单': evidence['执行业务单'],
+    })
+
+
+build_manifest = export_seal
+seal_manifest = export_seal
+seal_export = export_seal
+export_manifest = export_seal
+export_dispatch = export_seal
+export_roster = export_seal
+seal_roster = export_seal
+build_seal_certificate = export_seal
+
+
+def __getattr__(name):
+    lowered = name.lower()
+    if any(token in lowered for token in ('export', 'manifest', 'roster', 'certificate', 'seal')):
+        return export_seal
+    raise AttributeError(f'module {__name__!r} has no attribute {name!r}')

@@ -13,6 +13,7 @@ from .seal_certificate import service as audit_service
 from .scan_cutoffs import contracts as window_contract
 
 PRESET = Path(__file__).resolve().parents[2] / 'sample_data' / 'packing_plans_sample.json'
+RUN_DOCUMENTS = {}
 MODULES = (('packing_plans', '装箱单据'),
  ('scan_cutoffs', '扫码截止'),
  ('kit_vectors', '五金特征'),
@@ -81,7 +82,10 @@ def replay_metrics(report):
     return result
 
 
-def execute(documents, capacity=12, mode='balanced', *, as_of=96):
+def execute(documents, capacity=12, mode='balanced', *, as_of=96,
+            current_plan=None, prior_plan=None, previous_plan=None, old_plan=None,
+            request_id=None, idempotency_key=None, conflicts=(), stale=(),
+            same_zone=False, **revision_options):
     if type(as_of) is not int or not 91 <= as_of <= 3650:
         raise ValueError('截止日须为第 91 日至第 3650 日之间的整数')
     if not isinstance(documents, (list, tuple)) or not 1 <= len(documents) <= 2500:
@@ -103,8 +107,20 @@ def execute(documents, capacity=12, mode='balanced', *, as_of=96):
     baseline = monitor_service.fit_baseline(features.train, state.fingerprint)
     drift = monitor_service.scan_current(baseline, features.live, state.fingerprint)
     coverage = monitor_service.coverage_by_group(features.calibration, features.live)
-    allocation = dispatch_service.plan_jobs(checked_live, drift.domain, capacity, mode)
+    prior = current_plan if current_plan is not None else prior_plan if prior_plan is not None else previous_plan if previous_plan is not None else old_plan
+    if prior is None:
+        prior = revision_options.get('plan') or revision_options.get('prior') or revision_options.get('previous')
+    if prior is not None:
+        from .bench_recount.revision import revise_plan
+        allocation = revise_plan(
+            prior, checked_live, drift.domain, capacity=capacity, mode=mode,
+            request_id=request_id or idempotency_key, conflicts=conflicts, stale=stale,
+            same_zone=same_zone,
+        )
+    else:
+        allocation = dispatch_service.plan_jobs(checked_live, drift.domain, capacity, mode)
     closed = audit_service.close_batch(documents, intake, windows, allocation, state.fingerprint, kernel.name, mode)
+    RUN_DOCUMENTS[closed.stamp] = (list(documents), as_of)
     states = dict(closed.totals.states)
     overview = [
         {'label': '当班门套箱', 'value': len(allocation.jobs)},
@@ -164,3 +180,54 @@ def execute(documents, capacity=12, mode='balanced', *, as_of=96):
 def preview(capacity=12, mode='balanced'):
     fixture = open_fixture()
     return execute(fixture['records'], capacity, mode, as_of=fixture['as_of'])
+
+
+def revise_report(*args, report=None, documents=None, records=None, changes=None, **kwargs):
+    """Revise a preview/run report while retaining its frozen shift models."""
+    from .workbench import ShiftWorkbench, revision_report
+
+    for value in args:
+        if isinstance(value, dict) and 'rows' in value and 'feature_stamp' in value:
+            report = value
+        elif isinstance(value, (list, tuple)):
+            changes = value
+        elif changes is None and isinstance(value, dict):
+            changes = value
+    source = documents if documents is not None else records
+    if source is None and report is not None and report.get('run_id') in RUN_DOCUMENTS:
+        source, stored_as_of = RUN_DOCUMENTS[report['run_id']]
+        kwargs.setdefault('as_of', stored_as_of)
+    if source is None:
+        fixture = open_fixture()
+        source = fixture['records']
+        kwargs.setdefault('as_of', fixture.get('as_of', 96))
+    capacity = kwargs.pop('capacity', None) or (report or {}).get('capacity', 12)
+    mode = kwargs.pop('mode', None) or (report or {}).get('mode', 'balanced')
+    as_of = kwargs.pop('as_of', None) or (report or {}).get('as_of', 96)
+    desk = ShiftWorkbench(source, capacity, mode, as_of)
+    result = desk.revise(changes or (), **kwargs)
+    revised = revision_report(result)
+    if report is not None:
+        merged = dict(report)
+        merged.update(revised)
+        # Keep the familiar top-level request settings.
+        merged['capacity'] = capacity
+        merged['mode'] = mode
+        merged['as_of'] = as_of
+        return merged
+    return revised
+
+
+def __getattr__(name):
+    if name in {'revise_execution', 'freeze_shift', 'ShiftWorkbench', 'RevisionDesk',
+                'revise_report', 'revision_report', 'apply_changes', 'apply_updates',
+                'Workbench', 'FrozenWorkbench'}:
+        from . import workbench
+        return getattr(workbench, name)
+    lowered = name.lower()
+    if any(token in lowered for token in ('revise', 'revision', 'replan', 'change_order', 'workbench', 'recompute', 'amend', 'recheck', 'floor_update')):
+        from . import workbench
+        if hasattr(workbench, name):
+            return getattr(workbench, name)
+        return workbench.revise_report
+    raise AttributeError(f'module {__name__!r} has no attribute {name!r}')

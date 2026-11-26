@@ -129,3 +129,13 @@ def preliminary_evidence(batch, limit=8):
                   '、'.join(FIELDS[key][0] for key in FIELDS if getattr(row, key) is None))))
         for row in batch.entries[-limit:]
     ]
+
+
+_REVISION_EXPORTS = {'RevisionBook', 'RevisionDecision', 'merge_revision', 'as_record', 'reading_signature'}
+
+
+def __getattr__(name):
+    if name in _REVISION_EXPORTS:
+        from . import revision
+        return getattr(revision, name)
+    raise AttributeError(f'module {__name__!r} has no attribute {name!r}')

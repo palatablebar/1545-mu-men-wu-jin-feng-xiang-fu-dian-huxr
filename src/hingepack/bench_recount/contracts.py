@@ -1,4 +1,4 @@
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 
 RISK_CUTOFF = 0.57
 
@@ -41,6 +41,17 @@ class Job:
     summary: str
     priority: float
     rule_hits: tuple[str, ...]
+    readings: tuple[float, ...] = field(default=(), compare=False, repr=False)
+    missing: tuple[str, ...] = field(default=(), compare=False, repr=False)
+    bench: str = field(default='', compare=False, repr=False)
+    revision: int | None = field(default=None, compare=False)
+    pending_check: bool = field(default=False, compare=False)
+    reading_conflict: bool = field(default=False, compare=False)
+    stale: bool = field(default=False, compare=False)
+    idempotent_retry: bool = field(default=False, compare=False)
+    held: bool = field(default=False, compare=False)
+    sticky: bool = field(default=False, compare=False)
+    seat_retained: bool = field(default=False, compare=False)
 
     def change(self, state, reason, summary):
         return replace(self, state=state, reason=reason, summary=summary)
@@ -52,3 +63,10 @@ class Plan:
     capacity: int
     balance: int
     used_by_group: tuple[tuple[str, int], ...]
+    mode: str = field(default='balanced', compare=False)
+    retained: tuple[str, ...] = field(default=(), compare=False)
+    released: tuple[str, ...] = field(default=(), compare=False)
+    promoted: tuple[str, ...] = field(default=(), compare=False)
+    conflicts: tuple[str, ...] = field(default=(), compare=False)
+    stale: tuple[str, ...] = field(default=(), compare=False)
+    request_id: str | None = field(default=None, compare=False)

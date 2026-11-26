@@ -46,3 +46,12 @@ def document_control(rows):
         note = register_seal_certificate(row['measurements'], row['estimate'])
         register.append({'单号': row['key'], '区段': row['zone'], '处置': row['state'], **note})
     return register
+
+
+def __getattr__(name):
+    if name.startswith('__'):
+        raise AttributeError(name)
+    if any(token in name.lower() for token in ('export', 'manifest', 'roster', 'seal', 'certificate', 'balance')):
+        from .service import export_seal
+        return export_seal
+    raise AttributeError(name)

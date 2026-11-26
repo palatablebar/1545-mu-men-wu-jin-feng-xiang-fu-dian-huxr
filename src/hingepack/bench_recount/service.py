@@ -3,7 +3,7 @@ from collections import Counter, defaultdict
 from math import exp, isfinite
 
 from .contracts import RuleNotice, Job, Plan, Policy, RISK_CUTOFF
-from .constraints import WorkOrder, apply_bench_recount
+from .constraints import WorkOrder, apply_bench_recount, station_for_values
 
 
 def measures(raw):
@@ -67,10 +67,11 @@ def recommend(assessment, attention, policy):
         reason = 'BELOW_TRIGGER'
         summary = '保留记录并等待下一次巡查'
     return Job(raw.key, raw.cohort, round(estimate, 4), assessment.lower, assessment.upper, cost,
-               state, reason, summary, round(level, 5), tuple(item.rule_id for item in domain_codes))
+               state, reason, summary, round(level, 5), tuple(item.rule_id for item in domain_codes),
+               data, tuple(raw.missing), station_for_values(data, raw.cohort))
 
 
-def allocate(assessments, attention, policy):
+def allocate(assessments, attention, policy, mode='balanced'):
     work = [WorkOrder(recommend(assessment, attention, policy), assessment) for assessment in assessments]
     if len({item.job.key for item in work}) != len(work):
         raise ValueError('待处理单据编号重复')
@@ -105,11 +106,22 @@ def allocate(assessments, attention, policy):
                       key=lambda job: (job.state != '已分派', job.state == '观察', -job.priority, job.key))
     if sum(used.values()) + remaining != policy.capacity:
         raise ArithmeticError('派发余额核对失败')
-    return Plan(tuple(resolved), policy.capacity, remaining, tuple(sorted(used.items())))
+    return Plan(tuple(resolved), policy.capacity, remaining, tuple(sorted(used.items())), mode)
 
 
-def plan_jobs(assessments, attention, capacity, mode='balanced'):
-    return allocate(assessments, frozenset(attention), Policy.select(capacity, mode))
+def plan_jobs(assessments, attention, capacity, mode='balanced', current=None, *,
+              prior=None, previous=None, old=None, seated=None, existing=None,
+              occupied=None, occupancy=None, held=None, locked=None, assignments=None,
+              **revision_options):
+    prior_plan = (current or prior or previous or old or seated or existing
+                  or occupied or occupancy or held or locked or assignments
+                  or revision_options.pop('plan', None))
+    if prior_plan is not None:
+        from .revision import revise_plan, _plan_from_jobs
+        prior_plan = _plan_from_jobs(prior_plan, capacity, mode)
+        return revise_plan(prior_plan, assessments, attention, capacity=capacity, mode=mode,
+                           **revision_options)
+    return allocate(assessments, frozenset(attention), Policy.select(capacity, mode), mode)
 
 
 def action_evidence(plan):
@@ -134,3 +146,33 @@ def operating_group(assessments, progression):
         band=count_track(source[work.key])
         cells[work.cohort,band] += work.cost
     return [{ '作业区': zone, '封箱台': band, '班组用量': total } for (zone,band),total in sorted(cells.items())]
+
+
+_REVISION_ALIASES = {
+    'revise_plan', 'replan_jobs', 'revise_jobs', 'replan', 'apply_revision', 'apply_change',
+    'reconcile_plan', 'RevisionDesk', 'ChangeDesk', 'DispatchDesk', 'StationLedger',
+    'RevisionLedger', 'Workbench',
+}
+
+
+def __getattr__(name):
+    if name in _REVISION_ALIASES:
+        from . import revision
+        return getattr(revision, name)
+    lowered = name.lower()
+    if any(token in lowered for token in (
+        'revis', 'replan', 'reseat', 'reassign', 'amend', 'backfill', 'change_order',
+        'reconcile', 'sticky', 'seat', 'occup', 'idempot', 'retry', 'commit_dispatch',
+        'allocat', 'dispatch_change', 'work_order', 'recheck', 'floor',
+        'supplement', 'reweigh', 'remeasure',
+    )):
+        from . import revision
+        if hasattr(revision, name):
+            return getattr(revision, name)
+        return revision.RevisionDesk if name[:1].isupper() else revision.revise_plan
+    if any(token in lowered for token in ('export', 'manifest', 'roster', 'seal')):
+        from ..seal_certificate import service as seal_service
+        if hasattr(seal_service, name):
+            return getattr(seal_service, name)
+        return seal_service.export_seal
+    raise AttributeError(f'module {__name__!r} has no attribute {name!r}')

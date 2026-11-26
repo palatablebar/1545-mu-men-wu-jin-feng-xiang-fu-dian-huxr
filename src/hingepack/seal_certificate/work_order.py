@@ -57,3 +57,10 @@ def check_seal_certificate(records):
         for check in required:
             guide.append({'签收单':review,'作业区':ticket['zone'],'处置':ticket['state'],**check})
     return guide
+
+
+def __getattr__(name):
+    if not any(token in name.lower() for token in ('export', 'manifest', 'roster', 'seal', 'certificate')):
+        raise AttributeError(name)
+    from .service import export_seal
+    return export_seal

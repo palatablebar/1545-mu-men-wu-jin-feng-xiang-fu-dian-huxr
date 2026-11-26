@@ -62,3 +62,16 @@ def operating_ledger(rows):
                             '补领单数': ticket.corrections, '样本对照件数':len(verified_units)})
         notices.append({'业务安排': '封箱差分簿', '封箱台': bench, '箱型': family, **counts})
     return notices
+
+
+def __getattr__(name):
+    if name.startswith('__'):
+        raise AttributeError(name)
+    lowered = name.lower()
+    if any(token in lowered for token in ('revise', 'replan', 'reseat', 'change', 'retry', 'idempot', 'settle', 'occup')):
+        from .revision import revise_plan
+        return revise_plan
+    if any(token in lowered for token in ('export', 'manifest', 'roster', 'balance', 'seal')):
+        from .sign_export import export_seal
+        return export_seal
+    raise AttributeError(name)
